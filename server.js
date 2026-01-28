@@ -1,78 +1,57 @@
 const express = require('express');
 const cors = require('cors');
-const dotenv = require('dotenv');
-
-dotenv.config();
 const app = express();
 
-app.use(cors());
+app.use(cors({
+  origin: '*'
+}));
 app.use(express.json());
 
-console.log('🚀 Portfolio Tracker Backend Starting...');
+const PORT = process.env.PORT || 8080;
+const TINKOFF_API = 'https://invest-public-api.tinkoff.ru/rest/safe/';
 
-app.get('/api/status', (req, res) => {
-  res.json({ 
-    status: 'ok',
-    service: 'Portfolio Tracker Backend',
-    timestamp: new Date().toISOString(),
-    version: '1.0.0'
-  });
-});
+async function getPortfolio(token) {
+  try {
+    // Аккаунты
+    const accounts = await fetch(`${TINKOFF_API}user/accounts`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    }).then(r => r.json());
+    
+    if (!accounts.payload?.accounts?.[0]) return [];
+
+    const accountId = accounts.payload.accounts[0].id;
+    
+    // Портфель
+    const portfolio = await fetch(`${TINKOFF_API}portfolio?accountId=${accountId}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    }).then(r => r.json());
+
+    return (portfolio.payload?.positions || [])
+      .filter(p => p.quantity > 0)
+      .map(p => ({
+        ticker: p.ticker || 'N/A',
+        quantity: p.quantity,
+        averagePrice: parseFloat(p.averagePositionPrice?.value || 0),
+        currentPrice: parseFloat(p.currentPrice?.value || 0)
+      }));
+  } catch (e) {
+    throw new Error(e.message);
+  }
+}
+
+app.get('/api/status', (req, res) => res.json({ status: 'OK' }));
+app.get('/', (req, res) => res.json({ ready: true }));
 
 app.post('/api/tinkoff/sync', async (req, res) => {
   try {
     const { token } = req.body;
-    
-    if (!token) {
-      return res.status(400).json({ error: 'Token required' });
-    }
-
-    console.log('📊 Syncing portfolio...');
-
-    // Используем более универсальный подход для работы с API
-    const axios = require('axios');
-    
-    // Здесь может быть логика работы с Tinkoff API
-    res.json({
-      success: true,
-      positions: [],
-      accountId: 'demo',
-      timestamp: new Date().toISOString(),
-    });
-
+    const positions = await getPortfolio(token);
+    res.json({ success: true, positions, count: positions.length });
   } catch (error) {
-    console.error('❌ Tinkoff API Error:', error.message);
-    res.status(400).json({
-      error: error.message,
-      details: error.message,
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-app.get('/api/price/:ticker', async (req, res) => {
-  try {
-    const { ticker } = req.params;
-    res.json({
-      ticker: ticker.toUpperCase(),
-      price: 0,
-      currency: 'RUB',
-      name: ticker,
-    });
-  } catch (error) {
-    console.error('❌ Error fetching price:', error.message);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.use((req, res) => {
-  res.status(404).json({ error: 'Endpoint not found' });
-});
-
-const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`\n✅ Server running on port ${PORT}`);
-  console.log('\n📍 API Endpoints:');
-  console.log(`  GET  /api/status`);
-  console.log(`  POST /api/tinkoff/sync`);
-  console.log(`  GET  /api/price/:ticker\n`);
+  console.log(`Portfolio Tracker: http://localhost:${PORT}`);
 });
